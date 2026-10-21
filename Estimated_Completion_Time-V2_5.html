@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Estimated Completion Time</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --fg: #222222;
+      --muted: #555555;
+      --border: #dddddd;
+      --input-bg: #ffffff;
+      --input-border: #cccccc;
+      --btn: #4CAF50;
+      --btn-hover: #45a049;
+      color-scheme: light;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1c1c1e;
+        --fg: #f0f0f0;
+        --muted: #b0b0b0;
+        --border: #3a3a3c;
+        --input-bg: #2a2a2c;
+        --input-border: #4a4a4c;
+        color-scheme: dark;
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--fg);
+      font-family: system-ui, -apple-system, "Segoe UI", Arial, sans-serif;
+    }
+
+    h2 { margin-top: 0; }
+
+    .clock {
+      margin-bottom: 20px;
+      font-size: 1.2em;
+      font-weight: bold;
+    }
+
+    .container {
+      margin-bottom: 20px;
+      padding: 15px;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 3px;
+      font-size: 0.85em;
+      color: var(--muted);
+    }
+
+    input[type=number] {
+      width: 100%;
+      padding: 8px;
+      margin-bottom: 10px;
+      border: 1px solid var(--input-border);
+      border-radius: 4px;
+      background: var(--input-bg);
+      color: var(--fg);
+      font-size: 1em;
+    }
+
+    .presets {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .presets label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin: 0;
+      font-size: 0.95em;
+      color: var(--fg);
+      cursor: pointer;
+    }
+
+    .presets input[type=checkbox] {
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      cursor: pointer;
+    }
+
+    .row { display: flex; gap: 10px; }
+    .row > div { flex: 1; }
+
+    button {
+      padding: 10px 15px;
+      border: none;
+      border-radius: 4px;
+      background: var(--btn);
+      color: #fff;
+      font-size: 1em;
+      cursor: pointer;
+    }
+    button:hover { background: var(--btn-hover); }
+
+    .result {
+      margin-top: 10px;
+      font-weight: bold;
+    }
+
+    /* ---------- Layout: the two input boxes sit side by side ---------- */
+    .top-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      align-items: start;
+      margin-bottom: 20px;
+    }
+
+    .top-row > .container {
+      min-width: 0;
+      margin-bottom: 0;
+    }
+
+    @media (max-width: 640px) {
+      .top-row { grid-template-columns: 1fr; }   /* stack on phones */
+    }
+
+    /* ---------- Rolling digits ---------- */
+    .roll {
+      display: inline-flex;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* Keep spaces and punctuation (e.g. "10/21/2026 3:45 PM") from collapsing */
+    .roll > span:not(.digit) { white-space: pre; }
+
+    .digit {
+      display: inline-block;
+      height: 1lh;            /* window shows exactly one digit */
+      overflow: hidden;
+      vertical-align: bottom;
+    }
+
+    .strip {
+      display: block;
+      translate: 0 calc(var(--d) * -1lh);   /* slide the 0-9 column to digit --d */
+      transition: translate 0.9s cubic-bezier(0.2, 0.8, 0.2, 1);
+      transition-delay: calc(var(--i) * 90ms);
+    }
+
+    .strip > span { display: block; }
+
+    /* ---------- Secondary (Clear) button ---------- */
+    button.secondary {
+      margin-left: 4px;
+      background: transparent;
+      color: var(--fg);
+      border: 1px solid var(--input-border);
+    }
+    button.secondary:hover { background: var(--border); }
+
+    /* ---------- Calculate button: odometer roll ---------- */
+    /* Ticks through every digit one at a time, like a mechanical counter */
+    #gallonsToCansResult .strip {
+      transition: translate calc(0.25s + var(--d) * 0.14s) steps(var(--d), end);
+      transition-delay: 0s;
+    }
+
+    /* ---------- Timelapse (pop) and Result (drop in) ---------- */
+    /* These jump straight to the digit and animate the digit itself */
+    #timelapseResult .strip,
+    #timelapseFutureResult .strip,
+    #remainingResult .strip { transition: none; }
+
+    #timelapseResult .digit.go,
+    #timelapseFutureResult .digit.go,
+    #remainingResult .digit.go {
+      animation-timing-function: ease-out;
+      animation-fill-mode: backwards;
+    }
+
+    /* Timelapse button: digits pop out larger in green, then settle */
+    #timelapseResult .digit.go,
+    #timelapseFutureResult .digit.go {
+      animation-name: popIn;
+      animation-duration: 0.6s;
+      animation-delay: calc(var(--i) * 40ms);   /* shorter stagger: the date strings are long */
+    }
+    @keyframes popIn {
+      0%   { transform: scale(0);   opacity: 0; color: var(--btn); }
+      60%  { transform: scale(1.4); opacity: 1; }
+      100% { transform: scale(1); }
+    }
+
+    /* Result button (Remaining Cans): digits fall in from above and fade in */
+    #remainingResult .digit.go {
+      animation-name: dropIn;
+      animation-duration: 0.7s;
+      animation-delay: calc(var(--i) * 80ms);
+    }
+    @keyframes dropIn {
+      from { transform: translateY(-1.2em); opacity: 0; }
+      to   { transform: translateY(0);      opacity: 1; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .strip,
+      #gallonsToCansResult .strip { transition: none; }
+
+      #timelapseResult .digit.go,
+      #timelapseFutureResult .digit.go,
+      #remainingResult .digit.go { animation: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="clock" id="clock"></div>
+
+  <div class="top-row">
+
+  <!-- Gallons -> cans -->
+  <div class="container">
+    <h2>Gallons to Can Calculator</h2>
+
+    <label for="gallons">Gallons</label>
+    <input type="number" id="gallons" placeholder="Enter gallons" step="any" min="0">
+
+    <label for="canSize">Ounces per can</label>
+    <input type="number" id="canSize" placeholder="Ounces per can" step="any" min="0">
+
+    <div class="presets" role="group" aria-label="Common can sizes">
+      <label><input type="checkbox" class="preset" value="12"> 12 oz</label>
+      <label><input type="checkbox" class="preset" value="16"> 16 oz</label>
+      <label><input type="checkbox" class="preset" value="19.2"> 19.2 oz</label>
+      <label><input type="checkbox" class="preset" value="23.5"> 23.5 oz</label>
+    </div>
+
+    <button type="button" id="calcCansBtn">Calculate</button>
+    <div class="result" id="gallonsToCansResult"></div>
+  </div>
+
+  <!-- Target - completed -> remaining cans (alternative to the gallons calculator) -->
+  <div class="container">
+    <h2>Remaining Cans</h2>
+
+    <div class="row">
+      <div>
+        <label for="targetQty">Target Quantity</label>
+        <input type="number" id="targetQty" placeholder="Enter target" step="1" min="0">
+      </div>
+      <div>
+        <label for="cansCompleted">Cans Completed</label>
+        <input type="number" id="cansCompleted" placeholder="Enter completed" step="1" min="0">
+      </div>
+    </div>
+
+    <button type="button" id="remainingBtn">Result</button>
+    <button type="button" id="remainingClearBtn" class="secondary">Clear</button>
+    <div class="result" id="remainingResult"></div>
+  </div>
+
+  </div><!-- /top-row -->
+
+  <!-- Timelapse -->
+  <div class="container">
+    <h2>Timelapse to Can-Cut</h2>
+
+    <div class="row">
+      <div>
+        <label for="canPerMinute">CPM</label>
+        <input type="number" id="canPerMinute" placeholder="Enter CPM" step="any" min="0">
+      </div>
+      <div>
+        <label for="efficiency">Efficiency (%)</label>
+        <input type="number" id="efficiency" placeholder="e.g. 85" step="any" min="0" max="100" value="100">
+      </div>
+    </div>
+    <div class="result" id="realCpmResult"></div>
+
+    <label for="numberOfCansMax" style="margin-top: 10px;">Number of Cans (Max)</label>
+    <input type="number" id="numberOfCansMax" placeholder="Number of Cans (Max)" step="any" min="0">
+
+    <button type="button" id="timelapseBtn">Timelapse</button>
+    <div class="result" id="timelapseResult"></div>
+    <div class="result" id="timelapseFutureResult"></div>
+  </div>
+
+  <script>
+    // ---------- Constants & helpers ----------
+    const OZ_PER_GALLON = 128; // US fluid ounces
+
+    const $ = (id) => document.getElementById(id);
+    const readNumber = (id) => parseFloat($(id).value);
+    const isPositive = (n) => Number.isFinite(n) && n > 0;
+    const formatDateTime = (d) => `${d.toLocaleDateString()} ${d.toLocaleTimeString()}`;
+
+    // ---------- Rolling numbers ----------
+    // roll("42") marks a piece of text that should roll; plain strings stay static.
+    const roll = (text) => ({ roll: String(text) });
+
+    // Builds a number where every digit is a 0-9 column.
+    // CSS slides the column with: translate: 0 calc(var(--d) * -1lh)
+    function createRoll(text, animate) {
+      const wrap = document.createElement("span");
+      wrap.className = "roll";
+      wrap.setAttribute("role", "img");
+      wrap.setAttribute("aria-label", text);
+
+      [...text].forEach((ch, i) => {
+        if (!/\d/.test(ch)) {                       // ".", "/", ":" and spaces stay still
+          const fixed = document.createElement("span");
+          fixed.textContent = ch;
+          fixed.setAttribute("aria-hidden", "true");
+          wrap.appendChild(fixed);
+          return;
+        }
+
+        const digit = document.createElement("span");
+        digit.className = animate ? "digit go" : "digit";   // "go" = play the entrance animation
+        digit.style.setProperty("--i", i);
+        digit.dataset.target = ch;
+        digit.setAttribute("aria-hidden", "true");
+
+        const strip = document.createElement("span");
+        strip.className = "strip";
+        strip.style.setProperty("--d", animate ? 0 : ch);   // start at 0 when animating
+        strip.style.setProperty("--i", i);                  // stagger the digits
+
+        for (let n = 0; n <= 9; n++) {
+          const cell = document.createElement("span");
+          cell.textContent = n;
+          strip.appendChild(cell);
+        }
+
+        digit.appendChild(strip);
+        wrap.appendChild(digit);
+      });
+
+      return wrap;
+    }
+
+    // Fills a container with plain text and rolling numbers.
+    // When animate is true, every digit rolls from 0 to its value.
+    function renderRolling(container, parts, animate) {
+      container.textContent = "";
+      parts.forEach((part) => {
+        container.append(typeof part === "string" ? part : createRoll(part.roll, animate));
+      });
+
+      if (animate) {
+        container.offsetHeight;                     // force reflow so the transition runs
+        container.querySelectorAll(".digit").forEach((digit) => {
+          digit.firstElementChild.style.setProperty("--d", digit.dataset.target);
+        });
+      }
+    }
+
+    function durationParts(totalMinutes) {
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return hours > 0
+        ? [roll(hours), " h ", roll(minutes), " min"]
+        : [roll(minutes), " min"];
+    }
+
+    // ---------- Clock ----------
+    function updateClock() {
+      $("clock").textContent = `Current Time: ${formatDateTime(new Date())}`;
+    }
+
+    // ---------- Gallons to cans ----------
+    function calculateCans({ animate = false } = {}) {
+      const gallons = readNumber("gallons");
+      const canSize = readNumber("canSize");
+      const output = $("gallonsToCansResult");
+
+      if (!isPositive(gallons) || !isPositive(canSize)) {
+        output.textContent = "Please enter valid values.";
+        return;
+      }
+
+      const totalOunces = gallons * OZ_PER_GALLON;
+      const cansNeeded = Math.ceil(totalOunces / canSize);
+
+      renderRolling(output, [
+        `${gallons} gallons = ${totalOunces} oz → You need `,
+        roll(cansNeeded),
+        " can(s) of ",
+        roll(canSize),
+        " oz"
+      ], animate);
+
+      // Prefill the timelapse section and refresh its estimate.
+      // No animation here: only the Timelapse button rolls the timelapse results.
+      $("numberOfCansMax").value = cansNeeded;
+      calculateTimelapse({ silent: true });
+    }
+
+    // ---------- Target minus completed ----------
+    // Alternative way to fill "Number of Cans (Max)": remaining = target - completed.
+    function calculateRemaining({ animate = false } = {}) {
+      const target = readNumber("targetQty");
+      const completedValue = readNumber("cansCompleted");
+      const completed = Number.isFinite(completedValue) ? completedValue : 0;   // blank counts as 0
+      const output = $("remainingResult");
+
+      if (!isPositive(target) || completed < 0) {
+        output.textContent = animate ? "Please enter valid values." : "";
+        return;
+      }
+
+      const remaining = target - completed;
+
+      if (remaining <= 0) {
+        output.textContent = remaining === 0
+          ? "Target reached: 0 cans remaining."
+          : "Cans completed is more than the target.";
+        return;
+      }
+
+      renderRolling(output, [
+        `${target} − ${completed} = `,
+        roll(remaining),
+        " can(s) remaining"
+      ], animate);
+
+      // Prefill the timelapse section and refresh its estimate (no animation).
+      $("numberOfCansMax").value = remaining;
+      calculateTimelapse({ silent: true });
+    }
+
+    // Clears the Remaining Cans box and hands "Number of Cans (Max)" back to the gallons calculator.
+    function clearRemaining() {
+      $("targetQty").value = "";
+      $("cansCompleted").value = "";
+      $("remainingResult").textContent = "";
+
+      if (isPositive(readNumber("gallons")) && isPositive(readNumber("canSize"))) {
+        calculateCans();                      // prefill the cans from gallons again (no animation)
+      } else {
+        $("numberOfCansMax").value = "";      // nothing to take it from
+      }
+    }
+
+    // ---------- Real CPM = CPM × efficiency / 100 ----------
+    function getRealCpm() {
+      const cpm = readNumber("canPerMinute");
+      const efficiency = readNumber("efficiency");
+
+      if (!isPositive(cpm) || !isPositive(efficiency) || efficiency > 100) return null;
+      return cpm * (efficiency / 100);
+    }
+
+    function updateRealCpm() {
+      const realCpm = getRealCpm();
+      $("realCpmResult").textContent = realCpm === null ? "" : `Real CPM: ${realCpm.toFixed(2)}`;
+      return realCpm;
+    }
+
+    // ---------- Timelapse ----------
+    function calculateTimelapse({ silent = false, animate = false } = {}) {
+      const cans = readNumber("numberOfCansMax");
+      const realCpm = updateRealCpm();
+      const result = $("timelapseResult");
+      const future = $("timelapseFutureResult");
+
+      if (realCpm === null || !isPositive(cans)) {
+        if (!silent) {
+          result.textContent = "Please enter valid values.";
+          future.textContent = "";
+        }
+        return;
+      }
+
+      const start = new Date();
+      const minutes = Math.ceil(cans / realCpm); // rounded up: conservative estimate
+      const finish = new Date(start.getTime() + minutes * 60000);
+
+      renderRolling(result, [
+        roll(cans),
+        " can(s) at real CPM ",
+        roll(realCpm.toFixed(2)),
+        " will take about ",
+        ...durationParts(minutes)
+      ], animate);
+
+      renderRolling(future, [
+        "Start: ",
+        roll(formatDateTime(start)),
+        " → Finish: ",
+        roll(formatDateTime(finish))
+      ], animate);
+    }
+
+    // ---------- Event wiring ----------
+    function autoCalculateCans() {
+      if (isPositive(readNumber("gallons")) && isPositive(readNumber("canSize"))) {
+        calculateCans();
+      }
+    }
+
+    // ---------- Can size presets ----------
+    const presetBoxes = document.querySelectorAll(".preset");
+
+    // Only one preset can be selected at a time; it fills the ounces field.
+    function selectPreset(box) {
+      presetBoxes.forEach((other) => {
+        if (other !== box) other.checked = false;
+      });
+      if (box.checked) $("canSize").value = box.value;
+      autoCalculateCans();
+    }
+
+    // If the user types a size by hand, tick the matching preset (or none).
+    function syncPresetsToInput() {
+      const size = readNumber("canSize");
+      presetBoxes.forEach((box) => {
+        box.checked = parseFloat(box.value) === size;
+      });
+    }
+
+    presetBoxes.forEach((box) => box.addEventListener("change", () => selectPreset(box)));
+
+    // Each button rolls its own result: Calculate = odometer, Result = drop in, Timelapse = pop.
+    // Typing and ticking sizes update instantly with no roll.
+    $("calcCansBtn").addEventListener("click", () => calculateCans({ animate: true }));
+    $("timelapseBtn").addEventListener("click", () => calculateTimelapse({ animate: true }));
+
+    $("gallons").addEventListener("input", autoCalculateCans);
+    $("canSize").addEventListener("input", () => {
+      syncPresetsToInput();
+      autoCalculateCans();
+    });
+    $("remainingBtn").addEventListener("click", () => calculateRemaining({ animate: true }));
+    $("remainingClearBtn").addEventListener("click", clearRemaining);
+    $("targetQty").addEventListener("input", () => calculateRemaining());
+    $("cansCompleted").addEventListener("input", () => calculateRemaining());
+    $("canPerMinute").addEventListener("input", updateRealCpm);
+    $("efficiency").addEventListener("input", updateRealCpm);
+
+    updateClock();
+    setInterval(updateClock, 1000);
+  </script>
+</body>
+</html>
