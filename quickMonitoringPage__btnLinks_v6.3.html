@@ -1,0 +1,1332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Monitoring Navigation</title>
+    <style>
+        /* ==========================================================================
+           GLOBAL BASE STYLES & BACKGROUND
+           ========================================================================== */
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start; /* ★ CHANGED: was center — pins content to the top */
+            min-height: 100vh;
+            /* Vibrant multi-stop radial/linear gradient background */
+            background: linear-gradient(135deg, #101820 0%, #1a1a1a 45%, #7a6a45 80%, #D3BC8D 100%);
+            margin: 0;
+            padding: 20px 20px 160px 20px; /* ★ CHANGED: top 20px, bottom 160px reserved for the conveyor/cans */
+            box-sizing: border-box;
+            overflow-x: hidden;
+        }
+
+        /* ==========================================================================
+           ANIMATED BACKGROUND (Conveyor, Gears & PLC Status Light Pulses)
+           ========================================================================== */
+        .automation-bg {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+            opacity: 0.35;
+        }
+
+
+        /* conveyor belt strip along the bottom */
+        .conveyor-track {
+      position: absolute;
+      bottom: 20px;
+      left: 0;
+      width: 100%;
+      height: 24px;
+      background: repeating-linear-gradient(
+        90deg,
+        rgba(226, 232, 240, 0.25) 0px,
+        rgba(226, 232, 240, 0.25) 10px,
+        transparent 10px,
+        transparent 20px
+      );
+      border-top: 2px solid rgba(226, 232, 240, 0.4);
+      border-bottom: 2px solid rgba(226, 232, 240, 0.4);
+      animation: beltMove 2s linear infinite;
+        }
+        @keyframes beltMove {
+            from { background-position: 0 0; }
+            to { background-position: -36px 0; }
+        }
+
+        /* ==========================================================================
+           ★ CHANGED: INSPECTION LINE (Status cans, tags & laser beam)
+           Replaces the old 3D aluminum cans. Lives in its own layer so the colors
+           stay vivid (the .automation-bg layer above is faded to 35% opacity).
+           ========================================================================== */
+        .inspection-line {
+            position: fixed;
+            inset: 0;
+            z-index: 0;
+            pointer-events: none;
+            overflow: hidden;
+        }
+
+        /* Laser inspection beam in the middle of the belt */
+        .inspection-beam {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 4px;
+            height: 120px;
+            background: linear-gradient(180deg, rgba(56, 189, 248, 0) 0%, rgba(56, 189, 248, 0.8) 100%);
+            box-shadow: 0 0 15px #38bdf8;
+            z-index: 2;
+        }
+
+        /* Classic 3D aluminum can (before inspection).
+           The cylinder shading is a fixed overlay; --can-color is the "paint" underneath,
+           so after inspection the can keeps its 3D look but turns green / amber / red. */
+        .can {
+            --can-color: #b9c3ce;
+            position: absolute;
+            left: 0;
+            bottom: 44px;
+            width: 20px;
+            height: 42px;
+            border-radius: 3px 3px 2px 2px;
+            background:
+                linear-gradient(90deg,
+                    rgba(0, 0, 0, 0.55) 0%,
+                    rgba(0, 0, 0, 0.12) 14%,
+                    rgba(255, 255, 255, 0.60) 36%,
+                    rgba(255, 255, 255, 0.15) 56%,
+                    rgba(0, 0, 0, 0.28) 80%,
+                    rgba(0, 0, 0, 0.62) 100%),
+                var(--can-color);
+            border-top: 1px solid rgba(255, 255, 255, 0.7);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            filter: drop-shadow(0 6px 8px rgba(0, 0, 0, 0.5));
+            will-change: transform;
+        }
+
+        /* Silver lid / top rim */
+        .can::before {
+            content: "";
+            position: absolute;
+            top: -3px;
+            left: 8%;
+            width: 84%;
+            height: 5px;
+            border-radius: 50%;
+            background: linear-gradient(90deg, #6b7280, #ffffff 50%, #4b5563);
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+        }
+
+        /* Bottom chime */
+        .can::after {
+            content: "";
+            position: absolute;
+            bottom: 0;
+            left: 5%;
+            width: 90%;
+            height: 3px;
+            background: rgba(15, 23, 42, 0.45);
+            border-radius: 0 0 2px 2px;
+        }
+
+        /* Status paint + glow (applied when the can passes the inspection beam) */
+        .can.status-pass   { --can-color: #10b981; box-shadow: 0 0 16px #10b981, 0 0 30px rgba(16, 185, 129, 0.4); }
+        .can.status-warn   { --can-color: #f59e0b; box-shadow: 0 0 16px #f59e0b, 0 0 30px rgba(245, 158, 11, 0.4); }
+        .can.status-reject { --can-color: #ef4444; box-shadow: 0 0 16px #ef4444, 0 0 30px rgba(239, 68, 68, 0.5); }
+
+        /* Floating status tag above each inspected can */
+        .scada-tag {
+            position: absolute;
+            top: -24px;
+            font-size: 0.6rem;
+            font-weight: 800;
+            padding: 1px 4px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            white-space: nowrap;
+        }
+
+        .tag-pass   { background: rgba(16, 185, 129, 0.9); color: #022c22; box-shadow: 0 0 8px #10b981; }
+        .tag-warn   { background: rgba(245, 158, 11, 0.9); color: #451a03; box-shadow: 0 0 8px #f59e0b; }
+        .tag-reject { background: rgba(239, 68, 68, 0.9);  color: #450a0a; box-shadow: 0 0 8px #ef4444; }
+
+        /* Beam flashes in the result color each time it inspects a can */
+        .inspection-beam.flash { animation: beamFlash 0.45s ease-out; }
+        @keyframes beamFlash {
+            0%   { box-shadow: 0 0 40px 8px var(--flash, #38bdf8); filter: brightness(2.2); }
+            100% { box-shadow: 0 0 15px #38bdf8; filter: brightness(1); }
+        }
+        /* ★ END CHANGED */
+
+        /* Spinning gears to give an industrial HMI/PLC aesthetic */
+        .gear {
+            position: absolute;
+            border: 3px solid rgba(255,255,255,0.5);
+            border-radius: 50%;
+        }
+
+        .gear::before, .gear::after {
+            content: "";
+            position: absolute;
+            background: rgba(255,255,255,0.5);
+        }
+
+        .gear-spin { animation: spin 8s linear infinite; }
+        .gear-spin-rev { animation: spin 6s linear infinite reverse; }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .gear1 { width: 70px; height: 70px; top: 6%; right: 8%; }
+        .gear1::before { width: 3px; height: 70px; left: 33.5px; top: -3px; }
+        .gear1::after { width: 70px; height: 3px; top: 33.5px; left: -3px; }
+
+        .gear2 { width: 46px; height: 46px; top: 12%; right: 3%; }
+        .gear2::before { width: 3px; height: 46px; left: 21.5px; top: -3px; }
+        .gear2::after { width: 46px; height: 3px; top: 21.5px; left: -3px; }
+
+        .gear3 { width: 50px; height: 50px; bottom: 8%; left: 4%; }
+        .gear3::before { width: 3px; height: 50px; left: 23.5px; top: -3px; }
+        .gear3::after { width: 50px; height: 3px; top: 23.5px; left: -3px; }
+
+        /* PLC status indicator pulses */
+        .pulse-dot {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #7CFC9A;
+            box-shadow: 0 0 8px 2px rgba(124,252,154,0.8);
+            animation: pulse 1.8s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; transform: scale(0.85); }
+            50% { opacity: 1; transform: scale(1.1); }
+        }
+
+        /* ==========================================================================
+           MAIN LAYOUT (2-Column Flex Split)
+           ========================================================================== */
+        .page-container {
+            display: flex;
+            flex-direction: row;
+            gap: 25px;
+            width: 100%;
+            max-width: 1400px;
+            align-items: stretch;
+            z-index: 1;
+            position: relative;
+        }
+
+        /* Main Content Column (3:1 proportional split) */
+        .main-content {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            flex: 3;
+        }
+
+        /* Sidebar Column */
+        .sidebar-panel {
+            flex: 1.15;
+            box-sizing: border-box;
+            padding: 15px;
+            color: rgba(255, 255, 255, 0.95);
+            background: rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            gap: 25px;
+        }
+
+        /* ==========================================================================
+           TOP METRICS ROW (Clock & Weather + Quick Action Buttons)
+           ========================================================================== */
+        .top-widgets-row {
+            display: flex;
+            gap: 20px;
+            width: 100%;
+        }
+
+        .widget {
+            background: rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 16px;
+            padding: 20px 30px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .combo-widget {
+            flex: 0.35;
+            flex-direction: row;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .lines-widget {
+            flex: 0.65;
+            display: flex;
+            align-items: center;
+        }
+
+        .clock-widget { align-items: flex-start; }
+        .weather-widget { align-items: flex-end; text-align: right; }
+
+        .clock-time {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: 1px;
+            color: #ffffff;
+            line-height: 1.1;
+        }
+
+        .clock-date {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.8);
+            margin-top: 6px;
+        }
+
+        .weather-temp {
+            font-size: 34px;
+            font-weight: 700;
+            color: #ffffff;
+            line-height: 1.1;
+        }
+
+        .weather-desc {
+            font-size: 13px;
+            text-transform: capitalize;
+            color: rgba(255, 255, 255, 0.85);
+            margin-top: 4px;
+        }
+
+        /* ==========================================================================
+           HEADER TEXT ANIMATION (Kinetic text reveal)
+           ========================================================================== */
+        .kinetic-header {
+            width: 100%;
+            box-sizing: border-box;
+            overflow: hidden;
+            padding: 4px 0 0 4px;
+            /* ★ NEW: title + auto toggles sit side by side */
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px 28px;
+        }
+
+        /* ★ NEW: auto-switch checkboxes next to the title */
+        .auto-toggles {
+            display: none;                 /* ★ hidden — press Alt + Shift + A + C to show */
+            flex-direction: column;
+            gap: 3px;
+            padding: 7px 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.95);
+            background: rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+        .auto-toggles.show { display: flex; animation: autoPop 0.25s ease-out; }
+        @keyframes autoPop {
+            from { opacity: 0; transform: scale(0.9); }
+            to   { opacity: 1; transform: scale(1); }
+        }
+        .auto-toggle {
+            display: flex;
+            align-items: center;
+            gap: 7px;
+            cursor: pointer;
+            user-select: none;
+            white-space: nowrap;
+        }
+        .auto-toggle input { margin: 0; cursor: pointer; accent-color: #7CFC9A; }
+        /* countdown to the next automatic switch */
+        .auto-toggle .cd {
+            margin-left: auto;
+            padding-left: 14px;
+            min-width: 88px;
+            text-align: right;
+            opacity: 0.8;
+            font-weight: 500;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .kinetic-line {
+            margin: 0;
+            font-size: 34px;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: #ffffff;
+            text-shadow: 0 2px 6px rgba(0,0,0,0.25);
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0 10px;
+        }
+
+        .k-word {
+            display: inline-block;
+            opacity: 0;
+            transform: translateY(18px);
+            animation: kSettle 0.6s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+            animation-delay: var(--d);
+        }
+
+        .k-word:nth-child(even) {
+            color: rgba(255,255,255,0.45);
+            font-weight: 600;
+        }
+
+        @keyframes kSettle {
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ==========================================================================
+           SIDEBAR STYLING
+           ========================================================================== */
+        .sidebar-section-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin: 10px 0 5px 0;
+            color: #ffffff;
+            letter-spacing: 0.5px;
+        }
+
+        .sidebar-panel ul {
+            margin: 0;
+            padding-left: 18px;
+        }
+
+        .sidebar-panel li {
+            font-size: 14px;
+            line-height: 1.6;
+            margin-bottom: 6px;
+            color: rgba(255, 255, 255, 0.85);
+        }
+
+        .sidebar-panel a {
+            color: #ffffff;
+            text-decoration: underline;
+            text-underline-offset: 3px;
+        }
+
+        .sidebar-panel a:hover {
+            color: #7CFC9A;
+        }
+
+        .scrollable-list {
+            max-height: 520px;
+            overflow-y: auto;
+            padding-right: 5px;
+        }
+
+        .scrollable-list::-webkit-scrollbar { width: 6px; }
+        .scrollable-list::-webkit-scrollbar-track { background: rgba(255, 255, 255, 0.05); border-radius: 10px; }
+        .scrollable-list::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.2); border-radius: 10px; }
+
+        /* ==========================================================================
+           GRID & GLASSMORPHISM BUTTONS
+           ========================================================================== */
+        .grid-container {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .grid-container a {
+            text-decoration: none;
+        }
+
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 20px 15px;
+            text-align: center;
+            font-size: 17px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.95);
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            border: none;
+            cursor: pointer;
+            box-sizing: border-box;
+            background: rgba(255, 255, 255, 0.15);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.25);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.25);
+            box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.25),
+                        0 0 15px rgba(255, 255, 255, 0.4),
+                        inset 0 1px 0 rgba(255, 255, 255, 0.4);
+            transform: translateY(-4px);
+            color: #ffffff;
+        }
+
+        .btn:active {
+            transform: translateY(-1px);
+            box-shadow: 0 5px 20px 0 rgba(0, 0, 0, 0.2);
+        }
+
+        /* ==========================================================================
+           ★ NEW: TEAM THEME PICKER (left panel — checkbox changes background)
+           ========================================================================== */
+        .team-picker {
+            position: fixed;
+            left: 16px;
+            top: 30px;
+            width: 180px;
+            z-index: 3;
+            box-sizing: border-box;
+            padding: 14px 12px;
+            color: rgba(255, 255, 255, 0.95);
+            background: rgba(255, 255, 255, 0.12);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15);
+            text-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+        }
+
+        .team-picker-title {
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            margin: 0 0 10px 0;
+            color: #ffffff;
+        }
+
+        .team-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px 6px;
+        }
+
+        .team-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 3px 2px;
+            border-radius: 6px;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .team-item:hover { background: rgba(255, 255, 255, 0.15); }
+        .team-item input { margin: 0; cursor: pointer; accent-color: #7CFC9A; }
+
+        .team-swatch {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            flex-shrink: 0;
+        }
+
+        /* Random team button (reuses the glass .btn look, just smaller) */
+        .random-btn {
+            margin-top: 12px;
+            padding: 12px 10px;
+            font-size: 14px;
+        }
+
+        /* Toggle button — only shown on screens too narrow for the fixed panel */
+        .team-toggle {
+            display: none;
+            position: fixed;
+            left: 12px;
+            bottom: 100px;
+            z-index: 4;
+            padding: 8px 12px;
+            font-size: 13px;
+            font-weight: 600;
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.18);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            border-radius: 10px;
+            cursor: pointer;
+        }
+
+        @media (max-width: 1799px) {
+            .team-toggle { display: block; }
+            .team-picker {
+                display: none;
+                top: auto;
+                bottom: 145px;
+                left: 12px;
+                max-height: calc(100vh - 190px);
+                overflow-y: auto;
+            }
+            .team-picker.open { display: block; }
+        }
+        /* ★ END NEW */
+
+        /* ==========================================================================
+           ★ NEW: FLY-ACROSS TEAM FLAG (plays when a team box is checked)
+           ========================================================================== */
+        .team-flag {
+            position: fixed;
+            top: 18vh;
+            left: 0;
+            z-index: 6;
+            pointer-events: none;
+            display: flex;
+            align-items: flex-start;
+            filter: drop-shadow(0 8px 10px rgba(0, 0, 0, 0.45));
+            animation: flagFly 14s linear forwards;
+        }
+
+        .team-flag-bob {
+            display: flex;
+            align-items: flex-start;
+            animation: flagBob 2.4s ease-in-out infinite;
+        }
+
+        /* Cloth = 20 vertical strips, each one bobbing out of phase = waving effect */
+        .flag-cloth { display: flex; height: 120px; margin-top: 8px; }
+
+        .flag-strip {
+            width: 10px;
+            height: 120px;
+            background-repeat: no-repeat;
+            background-size: 200px 120px;
+            animation: flagWave 1.6s ease-in-out infinite;
+        }
+
+        /* Pole leads the way (flag trails behind it) */
+        .flag-pole {
+            position: relative;
+            width: 5px;
+            height: 175px;
+            border-radius: 3px;
+            background: linear-gradient(90deg, #8a8f98, #f1f5f9, #6b7280);
+        }
+
+        .flag-pole::before {
+            content: "";
+            position: absolute;
+            top: -6px;
+            left: -2px;
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 35% 35%, #fff4c2, #d3a82a);
+        }
+
+        @keyframes flagFly {
+            from { transform: translateX(-260px); }
+            to   { transform: translateX(calc(100vw + 20px)); }
+        }
+
+        @keyframes flagBob {
+            0%, 100% { transform: translateY(-10px) rotate(-1.5deg); }
+            50%      { transform: translateY(10px)  rotate(1.5deg); }
+        }
+
+        @keyframes flagWave {
+            0%, 100% { transform: translateY(calc(var(--amp) * -1px)); filter: brightness(1.1); }
+            50%      { transform: translateY(calc(var(--amp) * 1px));  filter: brightness(0.82); }
+        }
+        /* ★ END NEW */
+
+        /* ==========================================================================
+           ★ NEW: HEADER TEXT ANIMATION (Slide-Up → Odometer → Pop, switches every 29 min)
+           ========================================================================== */
+        /* Letter mode: each letter is its own element, so turn off the whole-word slide-up */
+        .kinetic-header.letters-mode { overflow: visible; }
+        .kinetic-line.letters .k-word { animation: none; opacity: 1; transform: none; }
+        .hl { display: inline-block; white-space: pre; }
+
+        /* 3 · Pop — letters pop out larger in green, then settle (from the Timelapse button) */
+        .kinetic-line.m-pop .hl {
+            animation: hlPop 0.6s ease-out backwards;
+            animation-delay: calc(var(--i) * 40ms);
+        }
+        @keyframes hlPop {
+            0%   { transform: scale(0);   opacity: 0; color: #7CFC9A; }
+            60%  { transform: scale(1.4); opacity: 1; }
+            100% { transform: scale(1); }
+        }
+
+        /* 2 · Odometer — each letter ticks through the alphabet up to its letter (from the Calculate button) */
+        .hl-roll {
+            display: inline-block;
+            height: 1lh;
+            overflow: hidden;
+            vertical-align: bottom;
+            white-space: pre;
+        }
+        .hl-strip {
+            display: block;
+            translate: 0 calc(var(--d) * -1lh);
+            transition: translate calc(0.3s + var(--d) * 0.06s) steps(var(--d), end);
+            transition-delay: calc(var(--i) * 40ms);
+        }
+        .hl-strip > span { display: block; width: max-content; }
+
+        @media (prefers-reduced-motion: reduce) {
+            .kinetic-line.m-pop .hl { animation: none; }
+            .hl-strip { transition: none; }
+        }
+        /* ★ END NEW */
+
+        /* ==========================================================================
+           RESPONSIVE DESIGN BREAKPOINTS
+           ========================================================================== */
+        @media (max-width: 1200px) {
+            .grid-container { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        @media (max-width: 900px) {
+            .page-container { flex-direction: column; }
+            .grid-container { grid-template-columns: repeat(2, 1fr); gap: 20px; }
+            .top-widgets-row { flex-direction: column; gap: 15px; }
+            .combo-widget { flex-direction: column; align-items: flex-start; gap: 15px; }
+            .weather-widget { align-items: flex-start; text-align: left; }
+        }
+
+        @media (max-width: 600px) {
+            .grid-container { grid-template-columns: 1fr; gap: 15px; }
+            .widget, .sidebar-panel { padding: 20px; }
+            .btn { padding: 18px 10px; font-size: 16px; }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Automation Background Graphics (conveyor, gears, pulses) -->
+    <div class="automation-bg" aria-hidden="true">
+        <div class="conveyor-track"></div>
+
+        <div class="gear gear1 gear-spin"></div>
+        <div class="gear gear2 gear-spin-rev"></div>
+        <div class="gear gear3 gear-spin"></div>
+
+        <div class="pulse-dot" style="top: 10%; left: 10%; animation-delay: 0s;"></div>
+        <div class="pulse-dot" style="top: 22%; left: 45%; animation-delay: 0.6s;"></div>
+        <div class="pulse-dot" style="top: 65%; left: 85%; animation-delay: 1.1s;"></div>
+        <div class="pulse-dot" style="top: 80%; left: 30%; animation-delay: 1.5s;"></div>
+    </div>
+
+    <!-- ★ CHANGED: Inspection line with status cans + tags + laser beam -->
+    <div class="inspection-line" aria-hidden="true">
+        <div class="inspection-beam"></div>
+
+        <!-- cans are created by the script (see "INSPECTION LINE") -->
+    </div>
+    <!-- ★ END CHANGED -->
+
+    <!-- ★ NEW: Team theme picker (checkbox list is built by the script at the bottom) -->
+    <button class="team-toggle" id="teamToggle" type="button">🏈 Teams</button>
+    <div class="team-picker" id="teamPicker">
+        <div class="team-picker-title">Team Theme</div>
+        <div class="team-grid" id="teamGrid"></div>
+        <button class="btn random-btn" id="randomTeamBtn" type="button">🎲 Random Team</button>
+    </div>
+    <!-- ★ END NEW -->
+
+    <!-- Main Navigation Container -->
+    <div class="page-container">
+        
+        <!-- Main Left Column -->
+        <div class="main-content">
+
+            <!-- Top Row: Time/Weather & Quick Access -->
+            <div class="top-widgets-row">
+                <div class="widget combo-widget">
+                    <div class="clock-widget">
+                        <div class="clock-time" id="clock">00:00:00 AM</div>
+                        <div class="clock-date" id="date">Loading Date...</div>
+                    </div>
+
+                    <div class="weather-widget">
+                        <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,0.6); margin-bottom: 2px;">Waddell, AZ</div>
+                        <div class="weather-temp" id="temp">--°F</div>
+                        <div class="weather-desc" id="weather-desc">Fetching weather...</div>
+                    </div>
+                </div>
+
+                <div class="widget lines-widget">
+                    <div class="grid-container">
+                        <a href="https://app.powerbi.com/groups/me/reports/e7c1252c-f1c9-41db-a935-92b5361958d7/08a27f35b742a779e096?ctid=0cd4cd18-a56e-4ace-8c21-d004953e6274&experience=power-bi&bookmarkGuid=0a1cf2ef6a87e2bd863b" target="_blank">
+                            <button class="btn">Weekly Schedule</button>
+                        </a>
+                        <a href="https://mabrewing.benchmarkdigital.com/home/" target="_blank">
+                            <button class="btn">Gensuite | Hazard ID</button>
+                        </a>
+                        <a href="https://markanthony.service-now.com/esc?id=emp_taxonomy_topic&topic_id=a9e165093b6f9610f07c117aa5e45a4d" target="_blank">
+                            <button class="btn">O.T Ticket Center</button>
+                        </a>
+                        <a href="C:\Users\khuynh\OneDrive - Mark Anthony Group\Desktop\html\Estimate Completion\Estimated_Completion_Time-V2_5.html" target="_blank">
+                            <button class="btn">ETC to Can-Cut</button>
+                        </a>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Kinetic Title Header -->
+            <div class="kinetic-header">
+                <h1 class="kinetic-line">
+                    <span class="k-word" style="--d:0s">Glendale</span>
+                    <span class="k-word" style="--d:0.08s">Automation &amp; Controls</span>
+                </h1>
+
+                <!-- ★ NEW: turn the automatic switching on / off -->
+                <div class="auto-toggles">
+                    <label class="auto-toggle" title="Switches the title animation style every 29 minutes">
+                        <input type="checkbox" id="autoTitleBox"> Auto Title <small class="cd" id="autoTitleCd"></small>
+                    </label>
+                    <label class="auto-toggle" title="Switches to a random team color theme every 13 minutes">
+                        <input type="checkbox" id="autoThemeBox"> Auto Theme <small class="cd" id="autoThemeCd"></small>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Ignition & Facility Navigation Links -->
+            <div class="grid-container">
+                <a href="http://10.70.190.39/data/perspective/client/_solo_dashboard/dashboard/GlendaleOverview?theme=dark" target="_blank"><button class="btn">Solo Dashboard</button></a>
+                <a href="http://10.70.190.42/data/perspective/client/GLE_MES/Glendale/Packaging/Can_Line_03" target="_blank"><button class="btn">MES+</button></a>
+                <a href="https://gleign01/data/perspective/client/PalletConveyor/" target="_blank"><button class="btn">Palletizer &harr; E80</button></a>
+                <a href="https://gleign01/data/perspective/client/Lubrication/1_Page" target="_blank"><button class="btn">Lubrication Page</button></a>
+                <a href="https://gleign01/data/perspective/client/ProductionInfo/fillerSpeed" target="_blank"><button class="btn">Filler Speed Monitoring</button></a>
+                <a href="https://gleign01/data/perspective/client/FILLER_Empty_Can" target="_blank"><button class="btn">Can Line Speed</button></a>
+                <a href="https://markanthony.sharepoint.com/sites/GLEAutomationandControls/SitePages/Home.aspx?e=4%3abdf4c5528c9d4a67b97e795db26d8d64&web=1&sharingv2=true&fromShare=true&at=9&CID=8aee3aa2-922e-49ef-8d4f-f243a0605148" target="_blank"><button class="btn">SOP &amp; Knowledge Base</button></a>
+                <a href="https://gleign01/data/perspective/client/GlendaleGlobal" target="_blank"><button class="btn">GlendaleGlobal</button></a>
+                <a href="https://markanthony.sharepoint.com/sites/ProjectGlendale994/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FProjectGlendale994%2FShared%20Documents%2FMaintenance%20Communication%2FMaintenance%20Communication%2FElectrical%20Schematics&p=true&ga=1" target="_blank"><button class="btn">KHS Schematic</button></a>
+                <a href="https://markanthony.sharepoint.com/sites/ProjectGlendale994/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FProjectGlendale994%2FShared%20Documents%2FMaintenance%20Communication%2FMaintenance%20Communication%2FGEA%2FGEA%20SYSTEM%2F13%20Hardware%20%2D%20Cable%20Plans&viewid=fd276391%2De754%2D4649%2D8126%2D95ebfe9fc5ff&p=true&ga=1" target="_blank"><button class="btn">GEA Schematic</button></a>
+                <a href="https://markanthony-my.sharepoint.com/:x:/r/personal/khuynh_mabrewing_com/Documents/KHS-ListOfAllCabinets.xlsx?d=w9a8262135aa54585ac1811ed40623c88&csf=1&web=1&e=lxzQnC" target="_blank"><button class="btn">Cabinet Locations</button></a>
+                <a href="https://awscanary-01/#Application=Public%2FPlants%5CGlendale%5CCan_Cut%5CCan_Cut_All" target="_blank"><button class="btn">Axiom | Canary Labs</button></a>
+                <a href="https://markanthony-my.sharepoint.com/:x:/g/personal/khuynh_mabrewing_com/IQCzlod5VHolSpwXFZ4Xg1JDAaiaE6TajbrBuieF04w5AAY?e=iMEbR1" target="_blank"><button class="btn">HMI IP Addresses</button></a>
+                <a href="https://markanthony.sharepoint.com/:x:/r/sites/MABAutomationandControls/_layouts/15/Doc.aspx?sourcedoc=%7B34707226-DFE1-43C5-943A-BDA7D64852E8%7D&file=OT%20Server%20list.xlsx&action=default&mobileredirect=true" target="_blank"><button class="btn">OT Server list</button></a>
+                <a href="https://markanthony.sharepoint.com/:x:/r/sites/MABAutomationandControls/_layouts/15/Doc.aspx?sourcedoc=%7BDF2BC585-A159-4A92-9925-634233EDA5B5%7D&file=IP%20List_EPP101234%20(V13).xlsx&action=default&mobileredirect=true" target="_blank"><button class="btn">GEA IP list</button></a>
+                <a href="https://markanthony.sharepoint.com/sites/ProjectGlendale994/Shared%20Documents/Forms/AllItems.aspx?viewid=fd276391%2De754%2D4649%2D8126%2D95ebfe9fc5ff&ct=1787193200340&or=EXCEL%2DWEB%2EBODY%2ENT&ga=1&id=%2Fsites%2FProjectGlendale994%2FShared%20Documents%2FMaintenance%20Communication%2FMaintenance%20Communication%2FGEA%2FGEA%20SYSTEM%2F13%20Hardware%20%2D%20Cable%20Plans%2F13%20Hardware%20%2D%20Cable%20Plans%5Flang1%2Ehtml&parent=%2Fsites%2FProjectGlendale994%2FShared%20Documents%2FMaintenance%20Communication%2FMaintenance%20Communication%2FGEA%2FGEA%20SYSTEM%2F13%20Hardware%20%2D%20Cable%20Plans" target="_blank"><button class="btn">Hardware manuals</button></a>
+                <a href="https://markanthony.sharepoint.com/:x:/r/sites/MABAutomationandControls/_layouts/15/Doc.aspx?sourcedoc=%7BD539C225-E8A3-4B89-8E7A-26F60F51224E%7D&file=KHS-Network-IPAddresses.xlsx&action=default&mobileredirect=true" target="_blank"><button class="btn"> KHS Network IP</button></a>
+                <a href="https://markanthony.sharepoint.com/sites/ProjectGlendale994/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FProjectGlendale994%2FShared%20Documents%2FMaintenance%20Communication%2FMaintenance%20Communication&viewid=fd276391%2De754%2D4649%2D8126%2D95ebfe9fc5ff&p=true&ct=1787194317200&or=EXCEL%2DWEB%2EBODY%2ENT&ga=1" target="_blank"><button class="btn">Others manuals</button></a>
+                <a href="https://markanthony.sharepoint.com/sites/GLEAutomationandControls/Shared%20Documents/Forms/AllItems.aspx?id=%2Fsites%2FGLEAutomationandControls%2FShared%20Documents%2FGeneral%2F%5FControls%20inventory&viewid=42c25afa%2D36b6%2D4eff%2D9f34%2D4d4d80a89a6c" target="_blank"><button class="btn">A&C Home</button></a>
+            </div>            
+        </div>
+
+        <!-- Right Sidebar Panel -->
+        <div class="sidebar-panel">
+
+            <div class="sidebar-section-title">PLC Line Equipment Routing</div>
+            
+            <div class="scrollable-list">
+                <ul>
+                    <li><strong>1LA</strong> = Depal</li>
+                    <li><strong>1TB</strong> = Can &amp; Filler Conveyor</li>
+                    <li><strong>1WB</strong> = Lid Feeder</li>
+                    <li>Ecolab Hygiene Center</li>
+                    <li><strong>1FD</strong> = Filler</li>
+                    <li><strong>1WL</strong> = Ferrum Seamer</li>
+                    <li><strong>1VG</strong> = Warmer</li>
+                    <li><strong>1PM</strong> = Cartoner | Jones</li>
+                    <li><strong>1KT</strong> = Kister Divider</li>
+                    <li><strong>1TG</strong> = Packed Conveyor | Packed Can Transport</li>
+                    <li><strong>2PM</strong> = Tray Packer | Kister</li>
+                    <li><strong>2TB</strong> = WIP Conveyor | Can Transport</li>
+                    <li><strong>2KT</strong> = Divider</li>
+                    <li><strong>1LB</strong> = Robot Palletizer | Mono Palletizer</li>
+                    <li><strong>1UB</strong> = Octopus Mono Wrapper | Pallet Wrapper</li>
+                </ul>
+            </div>
+
+            <hr style="border: none; border-top: 1px solid rgba(255,255,255,0.2); width: 100%; margin: 5px 0;">
+            
+            <div>
+                <div class="sidebar-section-title">SSCC=LPN | SKU=ProductID | Lot=BatchCode</div> 
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Client-Side Scripts -->
+    <script>
+        // ★ NEW: TEAM THEME PICKER ----------------------------------------------
+        // [code, full name, base (dark side of gradient), accent (bright side)]
+        const TEAMS = [
+            ['ARI', 'Arizona Cardinals',     '#000000', '#97233F'],
+            ['ATL', 'Atlanta Falcons',       '#000000', '#A71930'],
+            ['BAL', 'Baltimore Ravens',      '#241773', '#9E7C0C'],
+            ['BUF', 'Buffalo Bills',         '#00338D', '#C60C30'],
+            ['CAR', 'Carolina Panthers',     '#101820', '#0085CA'],
+            ['CHI', 'Chicago Bears',         '#0B162A', '#C83803'],
+            ['CIN', 'Cincinnati Bengals',    '#000000', '#FB4F14'],
+            ['CLE', 'Cleveland Browns',      '#311D00', '#FF3C00'],
+            ['DAL', 'Dallas Cowboys',        '#003594', '#869397'],
+            ['DEN', 'Denver Broncos',        '#002244', '#FB4F14'],
+            ['DET', 'Detroit Lions',         '#000000', '#0076B6'],
+            ['GB',  'Green Bay Packers',     '#203731', '#FFB612'],
+            ['HOU', 'Houston Texans',        '#03202F', '#A71930'],
+            ['IND', 'Indianapolis Colts',    '#002C5F', '#FFFFFF'],
+            ['JAX', 'Jacksonville Jaguars',  '#101820', '#006778'],
+            ['KC',  'Kansas City Chiefs',    '#E31837', '#FFB81C'],
+            ['LV',  'Las Vegas Raiders',     '#000000', '#A5ACAF'],
+            ['LAC', 'Los Angeles Chargers',  '#0080C6', '#FFC20E'],
+            ['LAR', 'Los Angeles Rams',      '#003594', '#FFA300'],
+            ['MIA', 'Miami Dolphins',        '#008E97', '#FC4C02'],
+            ['MIN', 'Minnesota Vikings',     '#4F2683', '#FFC62F'],
+            ['NE',  'New England Patriots',  '#002244', '#C60C30'],
+            ['NO',  'New Orleans Saints',    '#101820', '#D3BC8D'],
+            ['NYG', 'New York Giants',       '#0B2265', '#A71930'],
+            ['NYJ', 'New York Jets',         '#000000', '#125740'],
+            ['PHI', 'Philadelphia Eagles',   '#000000', '#004C54'],
+            ['PIT', 'Pittsburgh Steelers',   '#101820', '#FFB612'],
+            ['SF',  'San Francisco 49ers',   '#AA0000', '#B3995D'],
+            ['SEA', 'Seattle Seahawks',      '#002244', '#69BE28'],
+            ['TB',  'Tampa Bay Buccaneers',  '#34302B', '#D50A0A'],
+            ['TEN', 'Tennessee Titans',      '#0C2340', '#4B92DB'],
+            ['WAS', 'Washington Commanders', '#5A1414', '#FFB612']
+        ];
+        const DEFAULT_TEAM = 'NO';   // Saints (also what you get when you uncheck a team)
+
+        function hexToRgb(h) { return [1, 3, 5].map(i => parseInt(h.substr(i, 2), 16)); }
+        function rgbToHex(c) { return '#' + c.map(v => Math.round(v).toString(16).padStart(2, '0')).join(''); }
+        function mixHex(a, b, t) {
+            const x = hexToRgb(a), y = hexToRgb(b);
+            return rgbToHex(x.map((v, i) => v + (y[i] - v) * t));
+        }
+        function lumaHex(h) { const c = hexToRgb(h); return (0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]) / 255; }
+
+        function applyTeam(code) {
+            const t = TEAMS.find(x => x[0] === code) || TEAMS.find(x => x[0] === DEFAULT_TEAM);
+            const base = t[2];
+            let accent = t[3];
+            if (lumaHex(accent) > 0.8) accent = mixHex(accent, base, 0.4); // keep white text readable
+            const mid = mixHex(base, accent, 0.55);
+            document.body.style.background =
+                `linear-gradient(135deg, ${base} 0%, ${base} 45%, ${mid} 80%, ${accent} 100%)`;
+        }
+
+        function selectTeam(code, animate) {
+            document.querySelectorAll('#teamGrid input').forEach(cb => { cb.checked = (cb.value === code); });
+            applyTeam(code);
+            if (animate) { launchFlag(code); restartAutoTheme(); }   // flag flies; 13-min countdown restarts
+            try { localStorage.setItem('teamTheme', code); } catch (e) {}
+        }
+
+        // ★ NEW: random team + AUTO THEME timer ------------------------------------
+        const AUTO_THEME_MINUTES = 13;
+        let autoThemeTimer = null;
+
+        function randomTeamCode() {               // any team except the current one
+            const current = (document.querySelector('#teamGrid input:checked') || {}).value;
+            const pool = TEAMS.filter(t => t[0] !== current);
+            return pool[Math.floor(Math.random() * pool.length)][0];
+        }
+        let autoThemeNextAt = null;               // timestamp of the next automatic switch
+        function startAutoTheme() {
+            stopAutoTheme();
+            const ms = AUTO_THEME_MINUTES * 60 * 1000;
+            autoThemeNextAt = Date.now() + ms;
+            autoThemeTimer = setInterval(() => {
+                autoThemeNextAt = Date.now() + ms;
+                selectTeam(randomTeamCode(), true);
+            }, ms);
+        }
+        function stopAutoTheme() { clearInterval(autoThemeTimer); autoThemeTimer = null; autoThemeNextAt = null; }
+        function restartAutoTheme() { if (autoThemeTimer !== null) startAutoTheme(); }  // only if enabled
+        // ★ END NEW ---------------------------------------------------------------
+
+        // ★ NEW: flag art (SVG) + wave animation ---------------------------------
+        function flagSvg(t) {
+            const code = t[0], name = t[1].toUpperCase(), base = t[2], accent = t[3];
+            const txt = lumaHex(base) > 0.6 ? '#101820' : '#ffffff';
+            return `<svg xmlns='http://www.w3.org/2000/svg' width='200' height='120' viewBox='0 0 200 120'>` +
+                   `<rect width='200' height='120' fill='${base}'/>` +
+                   `<rect width='200' height='16' fill='${accent}'/>` +
+                   `<rect y='104' width='200' height='16' fill='${accent}'/>` +
+                   `<text x='100' y='68' text-anchor='middle' font-family='Arial Black,Arial,sans-serif' font-weight='900' font-size='42' fill='${txt}'>${code}</text>` +
+                   `<text x='100' y='91' text-anchor='middle' font-family='Arial,sans-serif' font-weight='700' font-size='11' fill='${txt}'>${name}</text>` +
+                   `</svg>`;
+        }
+
+        function launchFlag(code) {
+            if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+            const t = TEAMS.find(x => x[0] === code);
+            if (!t) return;
+
+            document.querySelectorAll('.team-flag').forEach(el => el.remove()); // one flag at a time
+
+            const url = `url("data:image/svg+xml,${encodeURIComponent(flagSvg(t))}")`;
+            const flag = document.createElement('div');
+            flag.className = 'team-flag';
+            const bob = document.createElement('div');
+            bob.className = 'team-flag-bob';
+            const cloth = document.createElement('div');
+            cloth.className = 'flag-cloth';
+
+            const N = 20;
+            for (let i = 0; i < N; i++) {                 // i = 0 is the free (left) end
+                const strip = document.createElement('div');
+                strip.className = 'flag-strip';
+                strip.style.backgroundImage = url;
+                strip.style.backgroundPosition = `${-i * 10}px 0`;
+                strip.style.setProperty('--amp', (1 + (1 - i / (N - 1)) * 3.5).toFixed(2)); // bigger wave far from pole
+                strip.style.animationDelay = `-${(i * 0.1).toFixed(2)}s`;
+                cloth.appendChild(strip);
+            }
+            const pole = document.createElement('div');
+            pole.className = 'flag-pole';
+
+            bob.append(cloth, pole);
+            flag.appendChild(bob);
+            flag.addEventListener('animationend', e => { if (e.target === flag) flag.remove(); });
+            document.body.appendChild(flag);
+            setTimeout(() => flag.remove(), 15000);        // safety cleanup
+        }
+        // ★ END NEW ---------------------------------------------------------------
+
+        (function buildTeamPicker() {
+            const grid = document.getElementById('teamGrid');
+            TEAMS.forEach(t => {
+                const label = document.createElement('label');
+                label.className = 'team-item';
+                label.title = t[1];
+                label.innerHTML =
+                    `<input type="checkbox" value="${t[0]}">` +
+                    `<span class="team-swatch" style="background:${t[3]}"></span>${t[0]}`;
+                // checking selects the team; unchecking falls back to the default team
+                label.querySelector('input').addEventListener('change', e =>
+                    selectTeam(e.target.checked ? t[0] : DEFAULT_TEAM, true));
+                grid.appendChild(label);
+            });
+
+            let saved = DEFAULT_TEAM;
+            try { saved = localStorage.getItem('teamTheme') || DEFAULT_TEAM; } catch (e) {}
+            selectTeam(saved);
+
+            // ★ NEW: random team button — picks any team except the current one
+            document.getElementById('randomTeamBtn').addEventListener('click', () =>
+                selectTeam(randomTeamCode(), true));
+
+            document.getElementById('teamToggle').addEventListener('click', () =>
+                document.getElementById('teamPicker').classList.toggle('open'));
+        })();
+        // ★ END NEW ------------------------------------------------------------
+
+        // ★ CHANGED: INSPECTION LINE ---------------------------------------------
+        // Plain aluminum cans roll in from the left. When a can reaches the laser beam
+        // (middle of the screen) it is "inspected" and randomly becomes PASS / INSPECT / REJECT.
+        (function inspectionLine() {
+            const layer = document.querySelector('.inspection-line');
+            const beam  = layer.querySelector('.inspection-beam');
+            const CAN_W = 20, TRAVEL_SECONDS = 12, COUNT = 5;
+
+            // chances: 70% pass, 15% inspect, 15% reject
+            function rollStatus() {
+                const r = Math.random();
+                if (r < 0.70) {
+                    const pct = Math.min(100, 98 + Math.random() * 2).toFixed(1);
+                    return { cls: 'pass',   text: (pct >= 100 ? '100' : pct) + '% PASS', color: '#10b981' };
+                }
+                if (r < 0.85) return { cls: 'warn',   text: 'INSPECT', color: '#f59e0b' };
+                return           { cls: 'reject', text: 'REJECT',  color: '#ef4444' };
+            }
+
+            function resetCan(c) {
+                c.inspected = false;
+                c.el.className = 'can';
+                c.el.innerHTML = '';
+            }
+
+            function inspect(c) {
+                c.inspected = true;
+                const st = rollStatus();
+                c.el.classList.add('status-' + st.cls);
+                const tag = document.createElement('span');
+                tag.className = 'scada-tag tag-' + st.cls;
+                tag.textContent = st.text;
+                c.el.appendChild(tag);
+
+                beam.style.setProperty('--flash', st.color);
+                beam.classList.remove('flash');
+                void beam.offsetWidth;            // restart the flash animation
+                beam.classList.add('flash');
+            }
+
+            const cans = [];
+            const startW = window.innerWidth;
+            for (let i = 0; i < COUNT; i++) {
+                const el = document.createElement('div');
+                el.className = 'can';
+                layer.appendChild(el);
+                const c = { el, x: -60 + i * ((startW + 110) / COUNT), inspected: false };
+                // cans that start on the right half of the screen begin already inspected
+                if (c.x + CAN_W / 2 >= startW / 2) inspect(c);
+                cans.push(c);
+            }
+
+            let last = performance.now();
+            function frame(now) {
+                const dt = Math.min((now - last) / 1000, 0.1);   // clamp after tab switches
+                last = now;
+                const W = window.innerWidth;
+                const speed = (W + 110) / TRAVEL_SECONDS;        // px per second
+                const beamX = W / 2;
+
+                cans.forEach(c => {
+                    c.x += speed * dt;
+                    if (c.x > W + 10) { c.x = -60; resetCan(c); }
+                    if (!c.inspected && c.x + CAN_W / 2 >= beamX) inspect(c);
+                    c.el.style.transform = `translateX(${c.x}px)`;
+                });
+                requestAnimationFrame(frame);
+            }
+            requestAnimationFrame(frame);
+        })();
+        // ★ END CHANGED ---------------------------------------------------------
+
+        // ★ NEW: HEADER ANIMATION CYCLE (every 29 min: slide-up → odometer → pop → repeat)
+        const titleCycle = (function headerAnimationCycle() {
+            const header = document.querySelector('.kinetic-header');
+            const h1 = document.querySelector('.kinetic-line');
+            const WORDS = ['Glendale', 'Automation & Controls'];
+            h1.setAttribute('aria-label', WORDS.join(' '));
+
+            function plainLetter(ch, i) {
+                const s = document.createElement('span');
+                s.className = 'hl';
+                s.textContent = ch;
+                s.style.setProperty('--i', i);
+                return s;
+            }
+
+            // Odometer letter: a strip a→(letter) or A→(letter) that slides up one step at a time
+            function rollLetter(ch, i, rolls) {
+                const base = ch === ch.toLowerCase() ? 97 : 65;
+                const n = ch.charCodeAt(0) - base;
+                const wrap = document.createElement('span');
+                wrap.className = 'hl-roll';
+                const strip = document.createElement('span');
+                strip.className = 'hl-strip';
+                strip.style.setProperty('--d', 0);
+                strip.style.setProperty('--i', i);
+                for (let k = 0; k <= n; k++) {
+                    const cell = document.createElement('span');
+                    cell.textContent = String.fromCharCode(base + k);
+                    strip.appendChild(cell);
+                }
+                wrap.appendChild(strip);
+                rolls.push({ wrap, strip, n });
+                return wrap;
+            }
+
+            function play(mode) {
+                h1.className = 'kinetic-line';
+                header.classList.remove('letters-mode');
+                h1.textContent = '';
+
+                if (mode === 'kinetic') {                       // original word slide-up
+                    WORDS.forEach((w, i) => {
+                        const span = document.createElement('span');
+                        span.className = 'k-word';
+                        span.style.setProperty('--d', (i * 0.08) + 's');
+                        span.textContent = w;
+                        h1.appendChild(span);
+                    });
+                    return;
+                }
+
+                h1.classList.add('letters', 'm-' + mode);
+                header.classList.add('letters-mode');
+
+                const rolls = [];
+                let idx = 0;
+                WORDS.forEach(w => {
+                    const word = document.createElement('span');
+                    word.className = 'k-word';
+                    word.setAttribute('aria-hidden', 'true');
+                    [...w].forEach(ch => {
+                        const i = idx++;
+                        word.appendChild(mode === 'odometer' && /[A-Za-z]/.test(ch)
+                            ? rollLetter(ch, i, rolls)
+                            : plainLetter(ch, i));
+                    });
+                    h1.appendChild(word);
+                });
+
+                if (mode === 'odometer') {
+                    // make each letter slot exactly as wide as its final letter, then roll
+                    rolls.forEach(r => { r.wrap.style.width = r.strip.lastElementChild.getBoundingClientRect().width + 'px'; });
+                    h1.offsetHeight;                              // force reflow so the transition runs
+                    rolls.forEach(r => r.strip.style.setProperty('--d', r.n));
+                }
+            }
+
+            const CYCLE = ['kinetic', 'odometer', 'pop'];   // starts on slide-up (page load)
+            const SWITCH_MINUTES = 29;
+            let step = 0, timer = null, nextAt = null;
+            const MS = SWITCH_MINUTES * 60 * 1000;
+            return {
+                start() {
+                    this.stop();
+                    nextAt = Date.now() + MS;
+                    timer = setInterval(() => {
+                        nextAt = Date.now() + MS;
+                        step = (step + 1) % CYCLE.length;
+                        play(CYCLE[step]);
+                    }, MS);
+                },
+                stop() { clearInterval(timer); timer = null; nextAt = null; },
+                nextAt() { return nextAt; }
+            };
+        })();
+
+        // ★ NEW: the two checkboxes next to the title (both ON by default, remembered) ----
+        (function autoToggles() {
+            const load = key => { try { const v = localStorage.getItem(key); return v === null ? true : v === '1'; } catch (e) { return true; } };
+            const save = (key, on) => { try { localStorage.setItem(key, on ? '1' : '0'); } catch (e) {} };
+
+            function wire(boxId, key, start, stop) {
+                const box = document.getElementById(boxId);
+                box.checked = load(key);
+                if (box.checked) start();
+                box.addEventListener('change', () => {
+                    save(key, box.checked);
+                    box.checked ? start() : stop();
+                });
+            }
+            wire('autoTitleBox', 'autoTitle', () => titleCycle.start(), () => titleCycle.stop());
+            wire('autoThemeBox', 'autoTheme', startAutoTheme, stopAutoTheme);
+
+            // ---- secret panel: hold Alt + Shift, then press A and C together to show / hide ----
+            const panel = document.querySelector('.auto-toggles');
+            const AUTO_HIDE_SECONDS = 20;          // hides itself again after this much idle time
+            let hideTimer = null;
+
+            // countdown text, e.g. "next in 12:34"
+            const fmt = ms => {
+                const t = Math.max(0, Math.ceil(ms / 1000));
+                return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+            };
+            function updateCountdowns() {
+                const t = titleCycle.nextAt();
+                document.getElementById('autoTitleCd').textContent =
+                    t ? 'next in ' + fmt(t - Date.now()) : 'paused';
+                document.getElementById('autoThemeCd').textContent =
+                    autoThemeNextAt ? 'next in ' + fmt(autoThemeNextAt - Date.now()) : 'paused';
+            }
+            updateCountdowns();
+            setInterval(() => { if (panel.classList.contains('show')) updateCountdowns(); }, 1000);
+            ['autoTitleBox', 'autoThemeBox'].forEach(id =>
+                document.getElementById(id).addEventListener('change', updateCountdowns));
+
+            function showPanel(on) {
+                panel.classList.toggle('show', on);
+                clearTimeout(hideTimer);
+                if (on) {
+                    updateCountdowns();
+                    hideTimer = setTimeout(() => showPanel(false), AUTO_HIDE_SECONDS * 1000);
+                }
+            }
+            ['change', 'mouseenter', 'click'].forEach(ev =>
+                panel.addEventListener(ev, () => { if (panel.classList.contains('show')) showPanel(true); }));
+
+            // track which keys are held so "A + C together" can be detected
+            const down = new Set();
+            let latched = false;                   // stops key-repeat from toggling over and over
+            document.addEventListener('keydown', e => {
+                down.add(e.code);
+                if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && down.has('KeyA') && down.has('KeyC')) {
+                    e.preventDefault();
+                    if (!latched) { latched = true; showPanel(!panel.classList.contains('show')); }
+                } else if (e.key === 'Escape') {
+                    showPanel(false);
+                }
+            });
+            document.addEventListener('keyup', e => {
+                down.delete(e.code);
+                if (!(down.has('KeyA') && down.has('KeyC'))) latched = false;
+            });
+            window.addEventListener('blur', () => { down.clear(); latched = false; });
+        })();
+        // ★ END NEW ----------------------------------------------------------
+        // ★ END NEW ----------------------------------------------------------
+
+        // 1. DIGITAL CLOCK LOGIC
+        function updateClock() {
+            const now = new Date();
+            
+            // Format 12-hour Time
+            let hours = now.getHours();
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            const ampm = hours >= 12 ? 'PM' : 'AM';
+            hours = hours % 12 || 12; // Converts 0 to 12
+            
+            document.getElementById('clock').textContent = `${hours}:${minutes}:${seconds} ${ampm}`;
+            
+            // Format Date (Day of week, Month Day)
+            const options = { weekday: 'long', month: 'short', day: 'numeric' };
+            document.getElementById('date').textContent = now.toLocaleDateString('en-US', options);
+        }
+
+        setInterval(updateClock, 1000);
+        updateClock(); 
+
+        // 2. LIVE NWS WEATHER API (Waddell, AZ Coordinates: 33.6115, -112.4260)
+        async function getWaddellWeather() {
+            try {
+                // Step 1: Query NWS points API for grid endpoints
+                const pointsUrl = "https://api.weather.gov/points/33.6115,-112.4260";
+                const response = await fetch(pointsUrl);
+                const pointsData = await response.json();
+                
+                // Step 2: Fetch hourly forecast from grid response
+                const forecastUrl = pointsData.properties.forecastHourly;
+                const forecastResponse = await fetch(forecastUrl);
+                const forecastData = await forecastResponse.json();
+                
+                // Step 3: Extract current period data and render to DOM
+                const currentPeriod = forecastData.properties.periods[0];
+                document.getElementById('temp').textContent = `${currentPeriod.temperature}°${currentPeriod.temperatureUnit}`;
+                document.getElementById('weather-desc').textContent = currentPeriod.shortForecast;
+            } catch (error) {
+                console.error("Weather data fetch error:", error);
+                document.getElementById('weather-desc').textContent = "Update paused";
+            }
+        }
+        
+        getWaddellWeather();
+        setInterval(getWaddellWeather, 900000); // Polling interval: 15 minutes
+    </script>
+</body>
+</html>
